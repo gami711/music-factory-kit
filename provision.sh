@@ -28,6 +28,21 @@ link_to_volume() {
   ln -s "$dst" "$src" && [ "$(readlink -f "$src")" = "$(readlink -f "$dst")" ]
 }
 
+# モデル $1 を Volume 上の $2/$1 に用意する。既に配布元と同じサイズなら何もしない。
+# Volume へ直接ダウンロードすると小さな書き込みの連続で極端に遅い（10GB で約40分）ため、
+# Pod ローカルの /root に落としてから Volume へまとめてコピーする（約50秒）。
+HF_BASE=https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main
+fetch_model() {
+  local name=$1 dir=$2 url=$3 size have
+  size=$(curl -sIL "$url" | tr -d '\r' | awk 'tolower($1)=="content-length:"{v=$2} END{print v}')
+  have=$(stat -c %s "$dir/$name" 2>/dev/null || echo 0)
+  if [ -n "$size" ] && [ "$have" = "$size" ]; then echo "MODEL OK: $name"; return 0; fi
+  mkdir -p "$dir" || return 1
+  echo "MODEL DOWNLOAD: $name"
+  curl -sfL -o "/root/$name.part" "$url" || { rm -f "/root/$name.part"; return 1; }
+  cp "/root/$name.part" "$dir/.$name.tmp" && mv "$dir/.$name.tmp" "$dir/$name" && rm -f "/root/$name.part"
+}
+
 [ -d /root/ComfyUI ] || git clone --depth 1 -q https://github.com/comfyanonymous/ComfyUI.git /root/ComfyUI
 cd /root/ComfyUI || { echo "COMFY FAILED: /root/ComfyUI がありません"; exit 1; }
 for d in diffusion_models vae text_encoders loras checkpoints; do
@@ -35,6 +50,18 @@ for d in diffusion_models vae text_encoders loras checkpoints; do
 done
 link_to_volume output /workspace/outputs || { echo "LINK FAILED: output（生成物がPodローカルに保存されるため中断）"; exit 1; }
 pip install --break-system-packages --no-cache-dir -q -r requirements.txt numpy 2>&1 | tail -1
+
+# モデル（初回のみダウンロード。2回目以降はサイズ確認だけで数秒）
+fetch_model ace_step_1.5_turbo_aio.safetensors /workspace/models/checkpoints "$HF_BASE/checkpoints/ace_step_1.5_turbo_aio.safetensors" \
+  || { echo "MODEL FAILED: ace_step_1.5_turbo_aio"; exit 1; }
+# 高音質版 XL-SFT も使う場合: ACESTEP_XL=1 bash /workspace/provision.sh
+if [ "${ACESTEP_XL:-0}" = "1" ]; then
+  fetch_model acestep_v1.5_xl_sft_bf16.safetensors /workspace/models/diffusion_models "$HF_BASE/split_files/diffusion_models/acestep_v1.5_xl_sft_bf16.safetensors" \
+    && fetch_model qwen_0.6b_ace15.safetensors /workspace/models/text_encoders "$HF_BASE/split_files/text_encoders/qwen_0.6b_ace15.safetensors" \
+    && fetch_model qwen_1.7b_ace15.safetensors /workspace/models/text_encoders "$HF_BASE/split_files/text_encoders/qwen_1.7b_ace15.safetensors" \
+    && fetch_model ace_1.5_vae.safetensors /workspace/models/vae "$HF_BASE/split_files/vae/ace_1.5_vae.safetensors" \
+    || { echo "MODEL FAILED: XL-SFT"; exit 1; }
+fi
 
 # FL LoRA training node（comfy起動より前に入れる）
 if [ ! -d /root/ComfyUI/custom_nodes/ComfyUI-FL-AceStep-Training ]; then
