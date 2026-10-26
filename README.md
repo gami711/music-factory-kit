@@ -30,11 +30,11 @@ bash /workspace/provision.sh
 ```bash
 bash master.sh input.mp3 output.mp3
 ```
-ffmpeg が必要です（macOS: `brew install ffmpeg`）。
+ffmpeg が必要です（macOS: `brew install ffmpeg` / Windows: `winget install --id Gyan.FFmpeg -e` のあと Git Bash で実行）。
 
 ### check_fingerprint.py
 ```bash
-# 要: fpcalc（macOS: brew install chromaprint / Ubuntu: apt install libchromaprint-tools）
+# 要: fpcalc（macOS: brew install chromaprint / Windows: winget install --id AcoustID.Chromaprint -e / Ubuntu: apt install libchromaprint-tools）
 python3 check_fingerprint.py 生成物フォルダ/ 比較したい音源フォルダ/
 ```
 一致率 0.65 超の曲は配信しない。0.85 超は Content ID 一致水準（絶対NG）。
